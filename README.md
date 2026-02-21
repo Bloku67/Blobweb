@@ -1,4 +1,4 @@
-# Interactive Graphics App
+# Blobweb
 
 React app for distorting images and videos with lighting, ASCII (#$%^&*), and blob tracking with white boxes and lines. Built with Vite, TypeScript, and Tailwind CSS.
 
@@ -14,7 +14,7 @@ npm run dev
 ### 1. Create a new GitHub repo
 
 1. Go to [github.com/new](https://github.com/new).
-2. Name it (e.g. `interactive-graphics-app`).
+2. Name it (e.g. `blobweb`).
 3. Do **not** add a README, .gitignore, or license (this repo already has them).
 4. Click **Create repository**.
 
@@ -34,7 +34,7 @@ If GitHub asks for login, use a [Personal Access Token](https://github.com/setti
 
 1. Go to [vercel.com](https://vercel.com) and sign in (use “Continue with GitHub”).
 2. Click **Add New…** → **Project**.
-3. **Import** your GitHub repo (e.g. `interactive-graphics-app`).
+3. **Import** your GitHub repo (e.g. `blobweb`).
 4. Leave **Root Directory** as `.` (this project is the repo root).
 5. **Build Command:** `npm run build` (default).
 6. **Output Directory:** `dist` (default for Vite).

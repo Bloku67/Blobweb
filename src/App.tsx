@@ -5,6 +5,7 @@ import { EffectControls } from './components/EffectControls';
 import { DownloadButton } from './components/DownloadButton';
 import { VideoPlayer } from './components/VideoPlayer';
 import { ThemeToggle } from './components/ThemeToggle';
+import { CobwebLogo } from './components/CobwebLogo';
 import type { EffectParams } from './hooks/useImageProcessor';
 
 export type MediaType = 'image' | 'video' | null;
@@ -54,7 +55,8 @@ function App() {
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 flex flex-col">
       <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold">Interactive Graphics</h1>
+          <CobwebLogo className="h-7 w-7 text-gray-900 dark:text-gray-100" />
+          <h1 className="text-xl font-semibold">Blobweb</h1>
           <ThemeToggle />
         </div>
         <div className="flex items-center gap-2">
