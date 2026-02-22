@@ -6,6 +6,7 @@ import { DownloadButton } from './components/DownloadButton';
 import { VideoPlayer } from './components/VideoPlayer';
 import { ThemeToggle } from './components/ThemeToggle';
 import { CobwebLogo } from './components/CobwebLogo';
+import { XIcon } from './components/XIcon';
 import type { EffectParams } from './hooks/useImageProcessor';
 
 export type MediaType = 'image' | 'video' | null;
@@ -55,19 +56,20 @@ function App() {
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 flex flex-col">
       <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0">
         <div className="flex items-center gap-3">
-          <CobwebLogo className="h-7 w-7 text-gray-900 dark:text-gray-100" />
-          <h1 className="text-xl font-semibold">Blobweb</h1>
           <div className="flex flex-col items-center gap-1">
-            <ThemeToggle />
+            <CobwebLogo className="h-7 w-7 text-gray-900 dark:text-gray-100" />
+            <h1 className="text-xl font-semibold">Blobweb</h1>
             <a
               href="https://x.com/ysolatetly"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline"
+              className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              aria-label="Visit X profile"
             >
-              X
+              <XIcon className="h-4 w-4 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100" />
             </a>
           </div>
+          <ThemeToggle />
         </div>
         <div className="flex items-center gap-2">
           {mediaSource && (
