@@ -6,6 +6,45 @@ import { downloadBlob, createFilename } from '@/utils/fileUtils';
 import type { EffectParams } from '@/hooks/useImageProcessor';
 import type { MediaSource } from '../App';
 
+const DEFAULT_FPS = 30;
+const FPS_MEASURE_DURATION_MS = 600;
+
+/** Detect video FPS using requestVideoFrameCallback; fallback to DEFAULT_FPS */
+function getVideoFPS(video: HTMLVideoElement): Promise<number> {
+  const rvfc = (video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: (now: number, metadata: unknown) => void) => number }).requestVideoFrameCallback;
+  if (typeof rvfc !== 'function') {
+    return Promise.resolve(DEFAULT_FPS);
+  }
+  return new Promise((resolve) => {
+    let frameCount = 0;
+    const start = performance.now();
+    let resolved = false;
+    const tick = () => {
+      frameCount++;
+      const elapsed = performance.now() - start;
+      if (elapsed >= FPS_MEASURE_DURATION_MS && !resolved) {
+        resolved = true;
+        video.pause();
+        video.currentTime = 0;
+        const fps = Math.round((frameCount / elapsed) * 1000);
+        resolve(Math.min(60, Math.max(1, fps)) || DEFAULT_FPS);
+        return;
+      }
+      if (!resolved) rvfc.call(video, tick);
+    };
+    video.currentTime = 0;
+    video.play().then(() => rvfc.call(video, tick)).catch(() => { if (!resolved) { resolved = true; resolve(DEFAULT_FPS); } });
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        video.pause();
+        video.currentTime = 0;
+        resolve(DEFAULT_FPS);
+      }
+    }, FPS_MEASURE_DURATION_MS + 800);
+  });
+}
+
 interface DownloadButtonProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   mediaSource: MediaSource;
@@ -62,24 +101,27 @@ export function DownloadButton({
   }, []);
 
   const webmToMp4 = useCallback(
-    async (webmBlob: Blob): Promise<Blob> => {
+    async (webmBlob: Blob, sourceFps: number): Promise<Blob> => {
       const ffmpeg = await loadFfmpeg();
       const data = await fetchFile(webmBlob);
       await ffmpeg.writeFile('input.webm', data);
-      // Convert to MP4 with proper frame rate preservation and H.264 encoding
-      // -c:v copy tries to copy video stream without re-encoding (faster, preserves quality)
-      // If that fails, fall back to libx264 encoding with 30fps
+      // Prefer stream copy; otherwise re-encode at source FPS with high quality
       try {
         await ffmpeg.exec(['-i', 'input.webm', '-c:v', 'copy', '-c:a', 'copy', 'output.mp4']);
       } catch {
-        // If copy fails, re-encode with libx264 at 30fps
-        await ffmpeg.exec(['-i', 'input.webm', '-r', '30', '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', 'output.mp4']);
+        // Re-encode: source FPS, high quality (CRF 18), slower preset
+        await ffmpeg.exec([
+          '-i', 'input.webm',
+          '-r', String(sourceFps),
+          '-c:v', 'libx264',
+          '-preset', 'slow',
+          '-crf', '18',
+          '-pix_fmt', 'yuv420p',
+          'output.mp4',
+        ]);
       }
       const out = await ffmpeg.readFile('output.mp4');
-      // Handle FileData from FFmpeg - readFile returns Uint8Array
-      // Create a copy to ensure we have a regular ArrayBuffer (not SharedArrayBuffer)
       const uint8Array = new Uint8Array(out as unknown as Uint8Array);
-      // Use the Uint8Array directly - Blob constructor accepts Uint8Array
       return new Blob([uint8Array], { type: 'video/mp4' });
     },
     [loadFfmpeg]
@@ -109,20 +151,25 @@ export function DownloadButton({
       return;
     }
 
-    // Use 30 FPS for capture stream - ensures consistent frame rate
-    // The canvas will be updated by useImageProcessor hook as video plays
-    const targetFPS = 30;
-    const stream = canvas.captureStream(targetFPS);
+    // Detect FPS from source video (briefly plays then resets)
+    const sourceFps = await getVideoFPS(video);
+    // Ensure video is back at start for recording
+    video.currentTime = 0;
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Capture at source video FPS so timing matches
+    const stream = canvas.captureStream(sourceFps);
 
     const useMp4 =
       typeof MediaRecorder !== 'undefined' &&
       MediaRecorder.isTypeSupported('video/mp4');
     const mimeType = useMp4 ? 'video/mp4' : 'video/webm;codecs=vp9';
-    
-    // MediaRecorder will use the stream's frame rate (30 FPS from captureStream)
+
+    // High bitrate for better quality (e.g. 8 Mbps for HD)
+    const videoBitsPerSecond = 8000000;
     const recorder = new MediaRecorder(stream, {
       mimeType,
-      videoBitsPerSecond: 5000000, // Increased bitrate for better quality
+      videoBitsPerSecond,
     });
 
     const chunks: Blob[] = [];
@@ -140,7 +187,7 @@ export function DownloadButton({
           showToast('Video downloaded (MP4)');
         } else {
           showToast('Converting to MP4…');
-          const mp4Blob = await webmToMp4(blob);
+          const mp4Blob = await webmToMp4(blob, sourceFps);
           downloadBlob(mp4Blob, createFilename('graphics-export', 'mp4'));
           showToast('Video downloaded (MP4)');
         }
