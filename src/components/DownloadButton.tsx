@@ -66,10 +66,21 @@ export function DownloadButton({
       const ffmpeg = await loadFfmpeg();
       const data = await fetchFile(webmBlob);
       await ffmpeg.writeFile('input.webm', data);
-      // Ensure output is 30 FPS: -r 30 sets frame rate, -c:v libx264 ensures H.264 encoding
-      await ffmpeg.exec(['-i', 'input.webm', '-r', '30', '-c:v', 'libx264', '-preset', 'medium', 'output.mp4']);
+      // Convert to MP4 with proper frame rate preservation and H.264 encoding
+      // -c:v copy tries to copy video stream without re-encoding (faster, preserves quality)
+      // If that fails, fall back to libx264 encoding with 30fps
+      try {
+        await ffmpeg.exec(['-i', 'input.webm', '-c:v', 'copy', '-c:a', 'copy', 'output.mp4']);
+      } catch {
+        // If copy fails, re-encode with libx264 at 30fps
+        await ffmpeg.exec(['-i', 'input.webm', '-r', '30', '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', 'output.mp4']);
+      }
       const out = await ffmpeg.readFile('output.mp4');
-      return new Blob([out], { type: 'video/mp4' });
+      // Handle FileData from FFmpeg - readFile returns Uint8Array
+      // Create a copy to ensure we have a regular ArrayBuffer (not SharedArrayBuffer)
+      const uint8Array = new Uint8Array(out as unknown as Uint8Array);
+      // Use the Uint8Array directly - Blob constructor accepts Uint8Array
+      return new Blob([uint8Array], { type: 'video/mp4' });
     },
     [loadFfmpeg]
   );
@@ -79,17 +90,39 @@ export function DownloadButton({
     if (!canvas || !mediaSource || mediaType !== 'video') return;
 
     const video = mediaSource as HTMLVideoElement;
-    // Capture canvas at exactly 30 FPS - this sets the stream frame rate
-    const stream = canvas.captureStream(30);
+    
+    // Ensure video is ready
+    if (video.readyState < 2) {
+      await new Promise((resolve) => {
+        const handleLoadedData = () => {
+          video.removeEventListener('loadeddata', handleLoadedData);
+          resolve(undefined);
+        };
+        video.addEventListener('loadeddata', handleLoadedData);
+      });
+    }
+
+    // Get the original video duration
+    const originalDuration = video.duration;
+    if (!originalDuration || !isFinite(originalDuration)) {
+      showToast('Invalid video duration');
+      return;
+    }
+
+    // Use 30 FPS for capture stream - ensures consistent frame rate
+    // The canvas will be updated by useImageProcessor hook as video plays
+    const targetFPS = 30;
+    const stream = canvas.captureStream(targetFPS);
 
     const useMp4 =
       typeof MediaRecorder !== 'undefined' &&
       MediaRecorder.isTypeSupported('video/mp4');
     const mimeType = useMp4 ? 'video/mp4' : 'video/webm;codecs=vp9';
+    
     // MediaRecorder will use the stream's frame rate (30 FPS from captureStream)
     const recorder = new MediaRecorder(stream, {
       mimeType,
-      videoBitsPerSecond: 2500000,
+      videoBitsPerSecond: 5000000, // Increased bitrate for better quality
     });
 
     const chunks: Blob[] = [];
@@ -120,14 +153,44 @@ export function DownloadButton({
     };
 
     setRecording(true);
-    recorder.start(100);
+    recorder.start(100); // Request data every 100ms for smoother recording
 
+    // Reset video to start
+    video.currentTime = 0;
+    
+    // Wait for video to seek to start
+    await new Promise((resolve) => {
+      const handleSeeked = () => {
+        video.removeEventListener('seeked', handleSeeked);
+        resolve(undefined);
+      };
+      video.addEventListener('seeked', handleSeeked);
+    });
+
+    // Play video and record for the full duration
     video.play();
-    const duration = video.duration * 1000;
-    await new Promise((r) => setTimeout(r, Math.min(duration, 10000)));
+    
+    // Record for the full original video duration
+    await new Promise((resolve) => {
+      const handleEnded = () => {
+        video.removeEventListener('ended', handleEnded);
+        resolve(undefined);
+      };
+      video.addEventListener('ended', handleEnded);
+      
+      // Fallback timeout (original duration + 1 second buffer)
+      setTimeout(() => {
+        video.removeEventListener('ended', handleEnded);
+        resolve(undefined);
+      }, (originalDuration + 1) * 1000);
+    });
+
+    // Stop recording
+    recorder.stop();
+    
+    // Reset video
     video.pause();
     video.currentTime = 0;
-    recorder.stop();
   }, [
     canvasRef,
     mediaSource,
