@@ -59,15 +59,18 @@ function App() {
           <div className="flex flex-col items-center gap-1">
             <CobwebLogo className="h-7 w-7 text-gray-900 dark:text-gray-100" />
             <h1 className="text-xl font-semibold">Blobweb</h1>
-            <a
-              href="https://x.com/ysolatetly"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-              aria-label="Visit X profile"
-            >
-              <XIcon className="h-4 w-4 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100" />
-            </a>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500 dark:text-gray-400">Built by :</span>
+              <a
+                href="https://x.com/ysolatetly"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                aria-label="Visit X profile"
+              >
+                <XIcon className="h-4 w-4 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100" />
+              </a>
+            </div>
           </div>
           <ThemeToggle />
         </div>

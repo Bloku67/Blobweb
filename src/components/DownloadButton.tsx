@@ -66,7 +66,8 @@ export function DownloadButton({
       const ffmpeg = await loadFfmpeg();
       const data = await fetchFile(webmBlob);
       await ffmpeg.writeFile('input.webm', data);
-      await ffmpeg.exec(['-i', 'input.webm', 'output.mp4']);
+      // Ensure output is 30 FPS: -r 30 sets frame rate, -c:v libx264 ensures H.264 encoding
+      await ffmpeg.exec(['-i', 'input.webm', '-r', '30', '-c:v', 'libx264', '-preset', 'medium', 'output.mp4']);
       const out = await ffmpeg.readFile('output.mp4');
       return new Blob([out], { type: 'video/mp4' });
     },
@@ -78,12 +79,14 @@ export function DownloadButton({
     if (!canvas || !mediaSource || mediaType !== 'video') return;
 
     const video = mediaSource as HTMLVideoElement;
+    // Capture canvas at exactly 30 FPS - this sets the stream frame rate
     const stream = canvas.captureStream(30);
 
     const useMp4 =
       typeof MediaRecorder !== 'undefined' &&
       MediaRecorder.isTypeSupported('video/mp4');
     const mimeType = useMp4 ? 'video/mp4' : 'video/webm;codecs=vp9';
+    // MediaRecorder will use the stream's frame rate (30 FPS from captureStream)
     const recorder = new MediaRecorder(stream, {
       mimeType,
       videoBitsPerSecond: 2500000,
