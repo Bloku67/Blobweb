@@ -20,18 +20,21 @@ input[type='range'] {
   -webkit-appearance: none;
   appearance: none;
 }
+/* Compact slider for phone: smaller track and thumb */
+input[type='range'].slider-compact::-webkit-slider-thumb,
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 1rem;
-  height: 1rem;
+  width: 0.75rem;
+  height: 0.75rem;
   border-radius: 50%;
   background: #2563eb;
   cursor: pointer;
 }
+input[type='range'].slider-compact::-moz-range-thumb,
 input[type='range']::-moz-range-thumb {
-  width: 1rem;
-  height: 1rem;
+  width: 0.75rem;
+  height: 0.75rem;
   border-radius: 50%;
   background: #2563eb;
   cursor: pointer;

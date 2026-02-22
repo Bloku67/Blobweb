@@ -23,10 +23,10 @@ function Slider({
   onChange,
 }: SliderProps) {
   return (
-    <div className="py-2">
-      <div className="flex justify-between text-sm mb-1">
-        <span className="text-gray-700 dark:text-gray-300">{label}</span>
-        <span className="text-gray-500 dark:text-gray-400 tabular-nums">
+    <div className="py-1">
+      <div className="flex justify-between items-center gap-2 text-xs mb-0.5">
+        <span className="text-gray-700 dark:text-gray-300 truncate">{label}</span>
+        <span className="text-gray-500 dark:text-gray-400 tabular-nums shrink-0">
           {value}
           {unit}
         </span>
@@ -39,9 +39,26 @@ function Slider({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full h-2 rounded-full appearance-none bg-gray-200 dark:bg-gray-600 disabled:opacity-50 accent-blue-600"
+        className="w-full h-1 rounded-full appearance-none bg-gray-200 dark:bg-gray-600 disabled:opacity-50 accent-blue-600 slider-compact"
       />
     </div>
+  );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/30 overflow-hidden">
+      <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-2.5 py-1.5 border-b border-gray-200 dark:border-gray-600">
+        {title}
+      </h3>
+      <div className="px-2.5 py-1.5">{children}</div>
+    </section>
   );
 }
 
@@ -62,120 +79,117 @@ export function EffectControls({
 
   return (
     <motion.div
-      className="p-4"
+      className="p-2 space-y-2"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.2 }}
     >
-      <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">
-        Lighting
-      </h3>
-      <Slider
-        label="Brightness"
-        value={params.brightness}
-        min={0}
-        max={200}
-        unit="%"
-        disabled={disabled}
-        onChange={(v) => update('brightness', v)}
-      />
-      <Slider
-        label="Contrast"
-        value={params.contrast}
-        min={0}
-        max={200}
-        unit="%"
-        disabled={disabled}
-        onChange={(v) => update('contrast', v)}
-      />
-      <Slider
-        label="Exposure"
-        value={params.exposure}
-        min={-2}
-        max={2}
-        step={0.1}
-        unit=" EV"
-        disabled={disabled}
-        onChange={(v) => update('exposure', v)}
-      />
-      <Slider
-        label="Shadows"
-        value={params.shadows}
-        min={0}
-        max={100}
-        unit="%"
-        disabled={disabled}
-        onChange={(v) => update('shadows', v)}
-      />
-      <Slider
-        label="Highlights"
-        value={params.highlights}
-        min={0}
-        max={100}
-        unit="%"
-        disabled={disabled}
-        onChange={(v) => update('highlights', v)}
-      />
+      <Section title="Lighting">
+        <Slider
+          label="Brightness"
+          value={params.brightness}
+          min={0}
+          max={200}
+          unit="%"
+          disabled={disabled}
+          onChange={(v) => update('brightness', v)}
+        />
+        <Slider
+          label="Contrast"
+          value={params.contrast}
+          min={0}
+          max={200}
+          unit="%"
+          disabled={disabled}
+          onChange={(v) => update('contrast', v)}
+        />
+        <Slider
+          label="Exposure"
+          value={params.exposure}
+          min={-2}
+          max={2}
+          step={0.1}
+          unit=" EV"
+          disabled={disabled}
+          onChange={(v) => update('exposure', v)}
+        />
+        <Slider
+          label="Shadows"
+          value={params.shadows}
+          min={0}
+          max={100}
+          unit="%"
+          disabled={disabled}
+          onChange={(v) => update('shadows', v)}
+        />
+        <Slider
+          label="Highlights"
+          value={params.highlights}
+          min={0}
+          max={100}
+          unit="%"
+          disabled={disabled}
+          onChange={(v) => update('highlights', v)}
+        />
+      </Section>
 
-      <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-6 mb-4">
-        ASCII Text Effect
-      </h3>
-      <Slider
-        label="Intensity"
-        value={params.asciiIntensity}
-        min={0}
-        max={100}
-        unit="%"
-        disabled={disabled}
-        onChange={(v) => update('asciiIntensity', v)}
-      />
-      <Slider
-        label="Character size"
-        value={params.asciiCharSize}
-        min={2}
-        max={20}
-        unit="px"
-        disabled={disabled}
-        onChange={(v) => update('asciiCharSize', v)}
-      />
+      <Section title="ASCII Text Effect">
+        <Slider
+          label="Intensity"
+          value={params.asciiIntensity}
+          min={0}
+          max={100}
+          unit="%"
+          disabled={disabled}
+          onChange={(v) => update('asciiIntensity', v)}
+        />
+        <Slider
+          label="Character size"
+          value={params.asciiCharSize}
+          min={2}
+          max={20}
+          unit="px"
+          disabled={disabled}
+          onChange={(v) => update('asciiCharSize', v)}
+        />
+      </Section>
 
-      <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-6 mb-4">
-        Blob tracking
-      </h3>
-      <Slider
-        label="Intensity"
-        value={params.blobTrackingSensitivity}
-        min={0}
-        max={100}
-        unit="%"
-        disabled={disabled}
-        onChange={(v) => update('blobTrackingSensitivity', v)}
-      />
-      <Slider
-        label="Max blobs"
-        value={params.blobMaxCount}
-        min={1}
-        max={20}
-        disabled={disabled}
-        onChange={(v) => update('blobMaxCount', v)}
-      />
-      <Slider
-        label="Lines amount"
-        value={params.lineCount}
-        min={0}
-        max={30}
-        disabled={disabled}
-        onChange={(v) => update('lineCount', v)}
-      />
-      <Slider
-        label="Line delay"
-        value={params.lineDelay}
-        min={1}
-        max={15}
-        unit=" steps"
-        disabled={disabled}
-        onChange={(v) => update('lineDelay', v)}
-      />
+      <Section title="Blob tracking">
+        <Slider
+          label="Sensitivity"
+          value={params.blobTrackingSensitivity}
+          min={0}
+          max={100}
+          unit="%"
+          disabled={disabled}
+          onChange={(v) => update('blobTrackingSensitivity', v)}
+        />
+        <Slider
+          label="Max blobs"
+          value={params.blobMaxCount}
+          min={1}
+          max={20}
+          disabled={disabled}
+          onChange={(v) => update('blobMaxCount', v)}
+        />
+        <Slider
+          label="Lines amount"
+          value={params.lineCount}
+          min={0}
+          max={30}
+          disabled={disabled}
+          onChange={(v) => update('lineCount', v)}
+        />
+        <Slider
+          label="Line delay"
+          value={params.lineDelay}
+          min={1}
+          max={15}
+          unit=" steps"
+          disabled={disabled}
+          onChange={(v) => update('lineDelay', v)}
+        />
+      </Section>
     </motion.div>
   );
 }
