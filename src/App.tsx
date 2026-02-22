@@ -57,7 +57,17 @@ function App() {
         <div className="flex items-center gap-3">
           <CobwebLogo className="h-7 w-7 text-gray-900 dark:text-gray-100" />
           <h1 className="text-xl font-semibold">Blobweb</h1>
-          <ThemeToggle />
+          <div className="flex flex-col items-center gap-1">
+            <ThemeToggle />
+            <a
+              href="https://x.com/ysolatetly"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline"
+            >
+              X
+            </a>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {mediaSource && (

@@ -1,5 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Download } from 'lucide-react';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { downloadBlob, createFilename } from '@/utils/fileUtils';
 import type { EffectParams } from '@/hooks/useImageProcessor';
 import type { MediaSource } from '../App';
@@ -43,6 +45,34 @@ export function DownloadButton({
     );
   }, [canvasRef, mediaSource, showToast]);
 
+  const ffmpegRef = useRef<FFmpeg | null>(null);
+  const ffmpegLoadedRef = useRef(false);
+
+  const loadFfmpeg = useCallback(async (): Promise<FFmpeg> => {
+    if (ffmpegRef.current && ffmpegLoadedRef.current) return ffmpegRef.current;
+    const ffmpeg = new FFmpeg();
+    const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+    ffmpegRef.current = ffmpeg;
+    ffmpegLoadedRef.current = true;
+    return ffmpeg;
+  }, []);
+
+  const webmToMp4 = useCallback(
+    async (webmBlob: Blob): Promise<Blob> => {
+      const ffmpeg = await loadFfmpeg();
+      const data = await fetchFile(webmBlob);
+      await ffmpeg.writeFile('input.webm', data);
+      await ffmpeg.exec(['-i', 'input.webm', 'output.mp4']);
+      const out = await ffmpeg.readFile('output.mp4');
+      return new Blob([out], { type: 'video/mp4' });
+    },
+    [loadFfmpeg]
+  );
+
   const handleDownloadVideo = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas || !mediaSource || mediaType !== 'video') return;
@@ -50,8 +80,12 @@ export function DownloadButton({
     const video = mediaSource as HTMLVideoElement;
     const stream = canvas.captureStream(30);
 
+    const useMp4 =
+      typeof MediaRecorder !== 'undefined' &&
+      MediaRecorder.isTypeSupported('video/mp4');
+    const mimeType = useMp4 ? 'video/mp4' : 'video/webm;codecs=vp9';
     const recorder = new MediaRecorder(stream, {
-      mimeType: 'video/webm;codecs=vp9',
+      mimeType,
       videoBitsPerSecond: 2500000,
     });
 
@@ -60,11 +94,26 @@ export function DownloadButton({
       if (e.data.size > 0) chunks.push(e.data);
     };
 
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      downloadBlob(blob, createFilename('graphics-export', 'webm'));
-      setRecording(false);
-      showToast('Video download started');
+    recorder.onstop = async () => {
+      try {
+        const blob = new Blob(chunks, {
+          type: useMp4 ? 'video/mp4' : 'video/webm',
+        });
+        if (useMp4) {
+          downloadBlob(blob, createFilename('graphics-export', 'mp4'));
+          showToast('Video downloaded (MP4)');
+        } else {
+          showToast('Converting to MP4…');
+          const mp4Blob = await webmToMp4(blob);
+          downloadBlob(mp4Blob, createFilename('graphics-export', 'mp4'));
+          showToast('Video downloaded (MP4)');
+        }
+      } catch (e) {
+        console.error(e);
+        showToast('Download failed');
+      } finally {
+        setRecording(false);
+      }
     };
 
     setRecording(true);
@@ -76,7 +125,13 @@ export function DownloadButton({
     video.pause();
     video.currentTime = 0;
     recorder.stop();
-  }, [canvasRef, mediaSource, mediaType, showToast]);
+  }, [
+    canvasRef,
+    mediaSource,
+    mediaType,
+    showToast,
+    webmToMp4,
+  ]);
 
   const handleClick = useCallback(() => {
     if (mediaType === 'video') {
