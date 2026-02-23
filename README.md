@@ -23,7 +23,7 @@ npm run dev
 In a terminal, from the **testApp** folder (this project root), run (replace `YOUR_USERNAME` and `REPO_NAME` with your GitHub username and repo name):
 
 ```bash
-cd C:\Users\ralfs\Test1\testApp
+cd C:\Users\USER\Test1\testApp
 git remote add origin https://github.com/YOUR_USERNAME/REPO_NAME.git
 git push -u origin main
 ```
@@ -41,3 +41,4 @@ If GitHub asks for login, use a [Personal Access Token](https://github.com/setti
 7. Click **Deploy**.
 
 Vercel will build and give you a live URL. Future pushes to `main` will auto-deploy.
+
