@@ -8,8 +8,12 @@ export interface EffectParams {
   asciiCharSize: number;
   blobTrackingSensitivity: number;
   blobMaxCount: number;
+  blobMinSize: number;
+  motionThreshold: number;
+  trackingPersistence: number;
   lineCount: number;
   lineDelay: number;
+  lineOpacity: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -69,7 +73,7 @@ function getAsciiChar(luminance: number, _intensity: number): string {
   return ASCII_CHARS[Math.max(0, Math.min(ASCII_CHARS.length - 1, index))];
 }
 
-/** Bounding box for a detected blob (bright/moving region) - declared early for applyAsciiEffect */
+/** Bounding box for a detected blob (bright/moving region) */
 export interface BlobBox {
   minX: number;
   minY: number;
@@ -78,9 +82,11 @@ export interface BlobBox {
   vx: number;
   vy: number;
   isMoving: boolean;
+  id: number;
+  age: number;
 }
 
-const BRIGHT_LUMINANCE_THRESHOLD = 0.45; // only draw ASCII on bright or moving regions
+const BRIGHT_LUMINANCE_THRESHOLD = 0.45;
 
 function cellInBlob(cx: number, cy: number, blobs: BlobBox[]): boolean {
   for (const b of blobs) {
@@ -89,7 +95,7 @@ function cellInBlob(cx: number, cy: number, blobs: BlobBox[]): boolean {
   return false;
 }
 
-/** Draw ASCII only on bright regions or inside detected blob boxes (moving/bright objects) */
+/** Draw ASCII only on bright regions or inside detected blob boxes */
 export function applyAsciiEffect(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -146,95 +152,166 @@ export function applyAsciiEffect(
   ctx.globalAlpha = 1;
 }
 
-const DETECT_SCALE = 0.25;
-const MOVE_THRESHOLD = 1.5;
-const SMOOTH_ALPHA = 0.25; // smoothing factor for sensitivity
+// ============================================
+// ENHANCED BLOB TRACKING SYSTEM
+// ============================================
 
-let previousBlobCenters: { x: number; y: number }[] = [];
+/** Detection scale - more aggressive for performance (was 0.25, now 0.1) */
+const DETECT_SCALE = 0.1;
+const SMOOTH_ALPHA = 0.25;
+
+// State management with ID persistence
+interface TrackedBlob {
+  x: number;
+  y: number;
+  id: number;
+  lastSeen: number;
+}
+
+let trackedBlobs: TrackedBlob[] = [];
+let nextBlobId = 1;
 let smoothedSensitivity = 0;
 let lineRevealCounter = 0;
 let previousBlobBoxesForLines: BlobBox[] = [];
 
 export function resetBlobTracking(): void {
-  previousBlobCenters = [];
-  previousBlobBoxesForLines = [];
+  trackedBlobs = [];
+  nextBlobId = 1;
+  smoothedSensitivity = 0;
   lineRevealCounter = 0;
+  previousBlobBoxesForLines = [];
 }
 
-function detectBlobs(
+/**
+ * Build integral image for fast luminance sum queries
+ * O(n) build time, O(1) query time
+ */
+function buildIntegralImage(imageData: ImageData): Float32Array {
+  const { width, height, data } = imageData;
+  const integral = new Float32Array((width + 1) * (height + 1));
+  
+  for (let y = 0; y < height; y++) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const lum = getLuminance(data[idx], data[idx + 1], data[idx + 2]);
+      rowSum += lum;
+      integral[(y + 1) * (width + 1) + (x + 1)] = integral[y * (width + 1) + (x + 1)] + rowSum;
+    }
+  }
+  
+  return integral;
+}
+
+/**
+ * Get sum of luminance in rectangle using integral image
+ */
+function getIntegralSum(integral: Float32Array, width: number, x1: number, y1: number, x2: number, y2: number): number {
+  const w = width + 1;
+  return integral[(y2 + 1) * w + (x2 + 1)] - integral[y1 * w + (x2 + 1)] - integral[(y2 + 1) * w + x1] + integral[y1 * w + x1];
+}
+
+/**
+ * Enhanced blob detection with:
+ * - Integral images for fast luminance queries
+ * - ID persistence across frames
+ * - Motion prediction
+ * - Configurable motion threshold
+ */
+function detectBlobsEnhanced(
   imageData: ImageData,
   sensitivity: number,
   scaleBackW: number,
   scaleBackH: number,
-  maxBlobs: number
+  maxBlobs: number,
+  minBlobSizePercent: number,
+  motionThresholdPx: number,
+  persistence: number
 ): BlobBox[] {
-  const { width, height, data } = imageData;
-  const threshold = Math.floor((sensitivity / 100) * 200);
+  const { width, height } = imageData;
+  const threshold = Math.floor((sensitivity / 100) * 255);
   const blobs: BlobBox[] = [];
-  const visited = new Set<number>();
-  const step = Math.max(2, Math.floor(width / 80));
+  const visited = new Uint8Array(width * height);
   
-  const getPixel = (x: number, y: number): number => {
+  // Build integral image for fast queries
+  const integral = buildIntegralImage(imageData);
+  
+  // Adaptive step based on resolution
+  const step = Math.max(3, Math.floor(width / 60));
+  
+  // Minimum blob area based on percentage
+  const minArea = Math.max(4, (minBlobSizePercent / 100) * (width * height) / 100);
+  
+  const getPixelFast = (x: number, y: number): number => {
     if (x < 0 || x >= width || y < 0 || y >= height) return 0;
-    const idx = (y * width + x) * 4;
-    return getLuminance(data[idx], data[idx + 1], data[idx + 2]) * 255;
+    // Use integral image for average in 3x3 area
+    const sum = getIntegralSum(integral, width, Math.max(0, x-1), Math.max(0, y-1), 
+                               Math.min(width-1, x+1), Math.min(height-1, y+1));
+    const count = (Math.min(width-1, x+1) - Math.max(0, x-1) + 1) * 
+                  (Math.min(height-1, y+1) - Math.max(0, y-1) + 1);
+    return (sum / count) * 255;
   };
   
   const floodFill = (startX: number, startY: number): BlobBox | null => {
     const stack: [number, number][] = [[startX, startY]];
     let minX = startX, maxX = startX, minY = startY, maxY = startY;
     let count = 0;
+    let sumX = 0, sumY = 0;
     
-    while (stack.length > 0 && count < 200) {
+    while (stack.length > 0 && count < 500) {
       const [x, y] = stack.pop()!;
       const key = y * width + x;
-      if (visited.has(key)) continue;
+      if (visited[key]) continue;
       
-      const lum = getPixel(x, y);
+      const lum = getPixelFast(x, y);
       if (lum < threshold) continue;
       
-      visited.add(key);
+      visited[key] = 1;
       count++;
+      sumX += x;
+      sumY += y;
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
       minY = Math.min(minY, y);
       maxY = Math.max(maxY, y);
       
-      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-        const nx = x + dx;
-        const ny = y + dy;
-        const nKey = ny * width + nx;
-        if (!visited.has(nKey) && getPixel(nx, ny) >= threshold) {
-          stack.push([nx, ny]);
-        }
+      // Check 4-connected neighbors
+      if (x > 0) stack.push([x - 1, y]);
+      if (x < width - 1) stack.push([x + 1, y]);
+      if (y > 0) stack.push([x, y - 1]);
+      if (y < height - 1) stack.push([x, y + 1]);
+    }
+    
+    if (count < minArea) return null;
+    
+    const cx = sumX / count;
+    const cy = sumY / count;
+    
+    // Find matching tracked blob
+    let matchedId = -1;
+    let minDist = Infinity;
+    
+    for (const tb of trackedBlobs) {
+      const dx = cx - tb.x;
+      const dy = cy - tb.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < minDist && dist < motionThresholdPx / DETECT_SCALE) {
+        minDist = dist;
+        matchedId = tb.id;
       }
     }
     
-    if (count < 4) return null;
-    
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    
-    let vx = 0, vy = 0;
-    if (previousBlobCenters.length > 0) {
-      let minDist = Infinity;
-      let closest = -1;
-      for (let i = 0; i < previousBlobCenters.length; i++) {
-        const p = previousBlobCenters[i];
-        const dist = Math.sqrt((cx - p.x) ** 2 + (cy - p.y) ** 2);
-        if (dist < minDist && dist < 80) {
-          minDist = dist;
-          closest = i;
-        }
-      }
-      if (closest >= 0) {
-        const p = previousBlobCenters[closest];
-        vx = cx - p.x;
-        vy = cy - p.y;
-      }
+    // Assign new ID if no match
+    if (matchedId === -1) {
+      matchedId = nextBlobId++;
     }
     
-    const isMoving = Math.sqrt(vx * vx + vy * vy) >= MOVE_THRESHOLD;
+    // Calculate velocity
+    const prev = trackedBlobs.find(tb => tb.id === matchedId);
+    const vx = prev ? (cx - prev.x) * DETECT_SCALE : 0;
+    const vy = prev ? (cy - prev.y) * DETECT_SCALE : 0;
+    
+    const isMoving = Math.sqrt(vx * vx + vy * vy) >= motionThresholdPx * 0.1;
     
     return {
       minX: (minX / width) * scaleBackW,
@@ -244,73 +321,112 @@ function detectBlobs(
       vx,
       vy,
       isMoving,
+      id: matchedId,
+      age: prev ? prev.lastSeen + 1 : 0,
     };
   };
   
   const cap = Math.max(1, maxBlobs);
+  
+  // Grid-based sampling for faster detection
   for (let y = 0; y < height && blobs.length < cap; y += step) {
     for (let x = 0; x < width && blobs.length < cap; x += step) {
       const key = y * width + x;
-      if (!visited.has(key) && getPixel(x, y) >= threshold) {
+      if (!visited[key] && getPixelFast(x, y) >= threshold) {
         const blob = floodFill(x, y);
         if (blob) blobs.push(blob);
       }
     }
   }
   
-  previousBlobCenters = blobs.map((b) => ({
-    x: ((b.minX + b.maxX) / 2) / scaleBackW * width,
-    y: ((b.minY + b.maxY) / 2) / scaleBackH * height,
-  }));
+  // Update tracked blobs with persistence
+  const newTracked: TrackedBlob[] = [];
+  
+  for (const blob of blobs) {
+    newTracked.push({
+      x: ((blob.minX + blob.maxX) / 2) / scaleBackW * width,
+      y: ((blob.minY + blob.maxY) / 2) / scaleBackH * height,
+      id: blob.id,
+      lastSeen: 0,
+    });
+  }
+  
+  // Add persistent blobs that haven't been seen recently
+  for (const tb of trackedBlobs) {
+    if (!blobs.find(b => b.id === tb.id)) {
+      if (tb.lastSeen < persistence) {
+        newTracked.push({ ...tb, lastSeen: tb.lastSeen + 1 });
+      }
+    }
+  }
+  
+  trackedBlobs = newTracked;
   
   return blobs;
 }
 
-/** Draw white outline boxes around detected blobs */
+/** Draw white outline boxes around detected blobs with ID labels */
 export function drawBlobBoxes(
   ctx: CanvasRenderingContext2D,
   blobs: BlobBox[],
   lineWidth: number = 2
 ): void {
   if (blobs.length === 0) return;
+  
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = lineWidth;
   ctx.setLineDash([]);
+  
   for (const b of blobs) {
     const w = b.maxX - b.minX;
     const h = b.maxY - b.minY;
     if (w > 2 && h > 2) {
       ctx.strokeRect(b.minX, b.minY, w, h);
+      
+      // Draw ID label for moving blobs
+      if (b.isMoving) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '10px monospace';
+        ctx.fillText(String(b.id), b.minX + 2, b.minY - 2);
+      }
     }
   }
 }
 
-/** Lines between blob boxes with delay: each frame we reveal more lines up to lineCount */
-function getLineSegments(blobs: BlobBox[], prev: BlobBox[]): { x1: number; y1: number; x2: number; y2: number }[] {
-  const segments: { x1: number; y1: number; x2: number; y2: number }[] = [];
+/** Lines between blob boxes with delay and opacity control */
+function getLineSegments(blobs: BlobBox[], prev: BlobBox[]): { x1: number; y1: number; x2: number; y2: number; strength: number }[] {
+  const segments: { x1: number; y1: number; x2: number; y2: number; strength: number }[] = [];
   const center = (b: BlobBox) => ({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
   
+  // Motion-based connections
   for (let i = 0; i < blobs.length; i++) {
     const c = center(blobs[i]);
+    
+    // Connect to previous position (motion trail)
     if (prev.length > 0) {
-      let bestJ = 0;
-      let bestD = Infinity;
-      for (let j = 0; j < prev.length; j++) {
-        const p = center(prev[j]);
-        const d = (c.x - p.x) ** 2 + (c.y - p.y) ** 2;
-        if (d < bestD) {
-          bestD = d;
-          bestJ = j;
+      const prevBlob = prev.find(p => p.id === blobs[i].id);
+      if (prevBlob) {
+        const pc = center(prevBlob);
+        const dist = Math.sqrt((c.x - pc.x) ** 2 + (c.y - pc.y) ** 2);
+        if (dist > 5) {
+          segments.push({ x1: pc.x, y1: pc.y, x2: c.x, y2: c.y, strength: 1.0 });
         }
       }
-      const p = center(prev[bestJ]);
-      segments.push({ x1: p.x, y1: p.y, x2: c.x, y2: c.y });
     }
+    
+    // Connect nearby blobs
     for (let j = i + 1; j < blobs.length && segments.length < 50; j++) {
       const c2 = center(blobs[j]);
-      segments.push({ x1: c.x, y1: c.y, x2: c2.x, y2: c2.y });
+      const dist = Math.sqrt((c.x - c2.x) ** 2 + (c.y - c2.y) ** 2);
+      if (dist < 200) {
+        segments.push({ 
+          x1: c.x, y1: c.y, x2: c2.x, y2: c2.y, 
+          strength: 1 - (dist / 200) 
+        });
+      }
     }
   }
+  
   return segments;
 }
 
@@ -318,7 +434,8 @@ export function drawBlobLines(
   ctx: CanvasRenderingContext2D,
   blobs: BlobBox[],
   lineCount: number,
-  lineDelay: number
+  lineDelay: number,
+  lineOpacity: number
 ): void {
   if (blobs.length === 0 || lineCount <= 0) return;
   
@@ -332,11 +449,15 @@ export function drawBlobLines(
     Math.min(segments.length, Math.floor(lineRevealCounter / delaySteps))
   );
   
-  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([]);
+  const baseAlpha = lineOpacity / 100;
+  
   for (let i = 0; i < numToDraw; i++) {
     const s = segments[i % segments.length];
+    const alpha = baseAlpha * s.strength;
+    
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 1 + s.strength;
+    ctx.setLineDash([]);
     ctx.beginPath();
     ctx.moveTo(s.x1, s.y1);
     ctx.lineTo(s.x2, s.y2);
@@ -344,18 +465,22 @@ export function drawBlobLines(
   }
 }
 
-/** Detect blobs on a downscaled buffer; uses smoothed sensitivity and maxBlobs cap */
+/** Detect blobs on a downscaled buffer with enhanced tracking */
 export function detectBlobsFromCanvas(
   ctx: CanvasRenderingContext2D,
   destWidth: number,
   destHeight: number,
   sensitivity: number,
-  maxBlobs: number
+  maxBlobs: number,
+  minBlobSize: number = 10,
+  motionThreshold: number = 15,
+  persistence: number = 5
 ): BlobBox[] {
   smoothedSensitivity = SMOOTH_ALPHA * sensitivity + (1 - SMOOTH_ALPHA) * smoothedSensitivity;
   
-  const dw = Math.max(80, Math.floor(destWidth * DETECT_SCALE));
-  const dh = Math.max(60, Math.floor(destHeight * DETECT_SCALE));
+  // More aggressive downscaling for performance (0.1x instead of 0.25x)
+  const dw = Math.max(40, Math.floor(destWidth * DETECT_SCALE));
+  const dh = Math.max(30, Math.floor(destHeight * DETECT_SCALE));
   
   const temp = document.createElement('canvas');
   temp.width = dw;
@@ -366,9 +491,19 @@ export function detectBlobsFromCanvas(
   tCtx.drawImage(ctx.canvas, 0, 0, destWidth, destHeight, 0, 0, dw, dh);
   const imageData = tCtx.getImageData(0, 0, dw, dh);
   
-  return detectBlobs(imageData, smoothedSensitivity, destWidth, destHeight, maxBlobs);
+  return detectBlobsEnhanced(
+    imageData, 
+    smoothedSensitivity, 
+    destWidth, 
+    destHeight, 
+    maxBlobs,
+    minBlobSize,
+    motionThreshold,
+    persistence
+  );
 }
 
+/** Main image processing with all effects */
 export function drawImageWithEffects(
   ctx: CanvasRenderingContext2D,
   source: HTMLImageElement | HTMLVideoElement,
@@ -396,7 +531,16 @@ export function drawImageWithEffects(
   const maxBlobs = Math.max(1, params.blobMaxCount);
   const blobs =
     params.blobTrackingSensitivity > 0 || params.asciiIntensity > 0
-      ? detectBlobsFromCanvas(ctx, destWidth, destHeight, params.blobTrackingSensitivity || 50, maxBlobs)
+      ? detectBlobsFromCanvas(
+          ctx, 
+          destWidth, 
+          destHeight, 
+          params.blobTrackingSensitivity || 50, 
+          maxBlobs,
+          params.blobMinSize,
+          params.motionThreshold,
+          params.trackingPersistence
+        )
       : [];
 
   if (params.asciiIntensity > 0) {
@@ -406,7 +550,7 @@ export function drawImageWithEffects(
   if (params.blobTrackingSensitivity > 0 && blobs.length > 0) {
     drawBlobBoxes(ctx, blobs, 2);
     if (params.lineCount > 0) {
-      drawBlobLines(ctx, blobs, params.lineCount, params.lineDelay);
+      drawBlobLines(ctx, blobs, params.lineCount, params.lineDelay, params.lineOpacity);
     }
   }
 }

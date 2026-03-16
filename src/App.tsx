@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { MediaUploader } from './components/MediaUploader';
 import { MediaCanvas } from './components/MediaCanvas';
-import { EffectControls } from './components/EffectControls';
+import { EffectControls, BlobTrackingControls } from './components/EffectControls';
 import { ShaderControls } from './components/ShaderControls';
 import { DownloadButton } from './components/DownloadButton';
 import { VideoPlayer } from './components/VideoPlayer';
@@ -19,17 +19,26 @@ function App() {
   const [mediaSource, setMediaSource] = useState<MediaSource>(null);
   const [mediaType, setMediaType] = useState<MediaType>(null);
   const [effectParams, setEffectParams] = useState<EffectParams>({
+    // Lighting
     brightness: 100,
     contrast: 100,
     exposure: 0,
     shadows: 0,
     highlights: 0,
+    // ASCII
     asciiIntensity: 0,
     asciiCharSize: 8,
+    // Blob Tracking
     blobTrackingSensitivity: 0,
     blobMaxCount: 8,
+    blobMinSize: 10,
+    motionThreshold: 15,
+    trackingPersistence: 5,
+    // Lines
     lineCount: 0,
     lineDelay: 3,
+    lineOpacity: 80,
+    // Shaders
     shaderParams: defaultShaderParams,
   });
   const [showBeforeAfter, setShowBeforeAfter] = useState<'before' | 'after'>('after');
@@ -50,8 +59,12 @@ function App() {
       asciiCharSize: 8,
       blobTrackingSensitivity: 0,
       blobMaxCount: 8,
+      blobMinSize: 10,
+      motionThreshold: 15,
+      trackingPersistence: 5,
       lineCount: 0,
       lineDelay: 3,
+      lineOpacity: 80,
       shaderParams: defaultShaderParams,
     });
   };
@@ -113,15 +126,26 @@ function App() {
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
         <aside className="w-full lg:w-80 shrink-0 border-b lg:border-b-0 lg:border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-y-auto">
           <MediaUploader onMediaLoaded={handleMediaLoaded} />
+          
           <EffectControls
             params={effectParams}
             onChange={setEffectParams}
             disabled={!mediaSource}
           />
-          <div className="border-t border-gray-200 dark:border-gray-700 mt-2">
+          
+          <div className="border-t border-gray-200 dark:border-gray-700">
+            <BlobTrackingControls
+              params={effectParams}
+              onChange={setEffectParams}
+              disabled={!mediaSource}
+            />
+          </div>
+          
+          <div className="border-t border-gray-200 dark:border-gray-700">
             <ShaderControls
               params={effectParams.shaderParams}
               onChange={handleShaderParamsChange}
+              disabled={!mediaSource}
             />
           </div>
         </aside>

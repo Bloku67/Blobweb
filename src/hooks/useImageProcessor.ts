@@ -8,17 +8,25 @@ import {
 } from '@/utils/webglShaders';
 
 export interface EffectParams {
+  // Lighting
   brightness: number;
   contrast: number;
   exposure: number;
   shadows: number;
   highlights: number;
+  // ASCII
   asciiIntensity: number;
   asciiCharSize: number;
+  // Blob Tracking
   blobTrackingSensitivity: number;
   blobMaxCount: number;
+  blobMinSize: number;
+  motionThreshold: number;
+  trackingPersistence: number;
+  // Lines
   lineCount: number;
   lineDelay: number;
+  lineOpacity: number;
   // WebGL Shader effects
   shaderParams: ShaderEffectParams;
 }
@@ -32,9 +40,13 @@ export const defaultEffectParams: EffectParams = {
   asciiIntensity: 0,
   asciiCharSize: 8,
   blobTrackingSensitivity: 0,
-  blobMaxCount: 5,
+  blobMaxCount: 8,
+  blobMinSize: 10,
+  motionThreshold: 15,
+  trackingPersistence: 5,
   lineCount: 0,
-  lineDelay: 5,
+  lineDelay: 3,
+  lineOpacity: 80,
   shaderParams: defaultShaderParams,
 };
 

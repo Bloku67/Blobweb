@@ -329,6 +329,8 @@ function detectBlobsWithState(
         vx,
         vy,
         isMoving: Math.sqrt(vx * vx + vy * vy) >= MOVE_THRESHOLD,
+        id: blobs.length + 1,
+        age: 0,
       });
     }
   }
