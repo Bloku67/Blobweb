@@ -1,49 +1,9 @@
 import { useState, useCallback, useRef } from 'react';
-import { Download } from 'lucide-react';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { Download, X, Loader2 } from 'lucide-react';
+import { exportVideo, cancelExport } from '@/utils/videoExporter';
 import { downloadBlob, createFilename } from '@/utils/fileUtils';
 import type { EffectParams } from '@/hooks/useImageProcessor';
 import type { MediaSource } from '../App';
-
-const DEFAULT_FPS = 30;
-const FPS_MEASURE_DURATION_MS = 600;
-
-/** Detect video FPS using requestVideoFrameCallback; fallback to DEFAULT_FPS */
-function getVideoFPS(video: HTMLVideoElement): Promise<number> {
-  const rvfc = (video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: (now: number, metadata: unknown) => void) => number }).requestVideoFrameCallback;
-  if (typeof rvfc !== 'function') {
-    return Promise.resolve(DEFAULT_FPS);
-  }
-  return new Promise((resolve) => {
-    let frameCount = 0;
-    const start = performance.now();
-    let resolved = false;
-    const tick = () => {
-      frameCount++;
-      const elapsed = performance.now() - start;
-      if (elapsed >= FPS_MEASURE_DURATION_MS && !resolved) {
-        resolved = true;
-        video.pause();
-        video.currentTime = 0;
-        const fps = Math.round((frameCount / elapsed) * 1000);
-        resolve(Math.min(60, Math.max(1, fps)) || DEFAULT_FPS);
-        return;
-      }
-      if (!resolved) rvfc.call(video, tick);
-    };
-    video.currentTime = 0;
-    video.play().then(() => rvfc.call(video, tick)).catch(() => { if (!resolved) { resolved = true; resolve(DEFAULT_FPS); } });
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        video.pause();
-        video.currentTime = 0;
-        resolve(DEFAULT_FPS);
-      }
-    }, FPS_MEASURE_DURATION_MS + 800);
-  });
-}
 
 interface DownloadButtonProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -52,199 +12,103 @@ interface DownloadButtonProps {
   effectParams: EffectParams;
 }
 
+type ExportStage = 'preparing' | 'recording' | 'encoding' | 'finalizing' | null;
+
 export function DownloadButton({
   canvasRef,
   mediaSource,
   mediaType,
+  effectParams,
 }: DownloadButtonProps) {
-  const [recording, setRecording] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState<ExportStage>(null);
+  const [frameInfo, setFrameInfo] = useState({ current: 0, total: 0 });
+  const [eta, setEta] = useState(0);
+  const abortRef = useRef(false);
 
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    setTimeout(() => setToast(null), 3000);
-  }, []);
+  const getStageLabel = (s: ExportStage): string => {
+    switch (s) {
+      case 'preparing': return 'Preparing...';
+      case 'recording': return 'Recording frames...';
+      case 'encoding': return 'Encoding video...';
+      case 'finalizing': return 'Finalizing...';
+      default: return '';
+    }
+  };
 
-  const handleDownloadImage = useCallback(() => {
+  const handleDownloadImage = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas || !mediaSource) return;
 
     canvas.toBlob(
       (blob) => {
         if (!blob) {
-          showToast('Download failed');
+          alert('Download failed');
           return;
         }
-        const ext = 'png';
-        downloadBlob(blob, createFilename('graphics-export', ext));
-        showToast('Image downloaded');
+        downloadBlob(blob, createFilename('blobweb-export', 'png'));
       },
       'image/png',
       0.95
     );
-  }, [canvasRef, mediaSource, showToast]);
-
-  const ffmpegRef = useRef<FFmpeg | null>(null);
-  const ffmpegLoadedRef = useRef(false);
-
-  const loadFfmpeg = useCallback(async (): Promise<FFmpeg> => {
-    if (ffmpegRef.current && ffmpegLoadedRef.current) return ffmpegRef.current;
-    const ffmpeg = new FFmpeg();
-    const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    });
-    ffmpegRef.current = ffmpeg;
-    ffmpegLoadedRef.current = true;
-    return ffmpeg;
-  }, []);
-
-  const webmToMp4 = useCallback(
-    async (webmBlob: Blob, sourceFps: number): Promise<Blob> => {
-      const ffmpeg = await loadFfmpeg();
-      const data = await fetchFile(webmBlob);
-      await ffmpeg.writeFile('input.webm', data);
-      // Prefer stream copy; otherwise re-encode at source FPS with high quality
-      try {
-        await ffmpeg.exec(['-i', 'input.webm', '-c:v', 'copy', '-c:a', 'copy', 'output.mp4']);
-      } catch {
-        // Re-encode: source FPS, high quality (CRF 18), slower preset
-        await ffmpeg.exec([
-          '-i', 'input.webm',
-          '-r', String(sourceFps),
-          '-c:v', 'libx264',
-          '-preset', 'slow',
-          '-crf', '18',
-          '-pix_fmt', 'yuv420p',
-          'output.mp4',
-        ]);
-      }
-      const out = await ffmpeg.readFile('output.mp4');
-      const uint8Array = new Uint8Array(out as unknown as Uint8Array);
-      return new Blob([uint8Array], { type: 'video/mp4' });
-    },
-    [loadFfmpeg]
-  );
+  }, [canvasRef, mediaSource]);
 
   const handleDownloadVideo = useCallback(async () => {
     const canvas = canvasRef.current;
-    if (!canvas || !mediaSource || mediaType !== 'video') return;
-
     const video = mediaSource as HTMLVideoElement;
     
-    // Ensure video is ready
-    if (video.readyState < 2) {
-      await new Promise((resolve) => {
-        const handleLoadedData = () => {
-          video.removeEventListener('loadeddata', handleLoadedData);
-          resolve(undefined);
-        };
-        video.addEventListener('loadeddata', handleLoadedData);
+    if (!canvas || !video || mediaType !== 'video') return;
+
+    if (video.duration > 300) {
+      // 5 minute limit
+      const proceed = confirm(
+        `This video is ${Math.round(video.duration / 60)} minutes long. ` +
+        'Export may take a while and use significant memory. Continue?'
+      );
+      if (!proceed) return;
+    }
+
+    setIsExporting(true);
+    setProgress(0);
+    setStage('preparing');
+    abortRef.current = false;
+
+    try {
+      const result = await exportVideo({
+        video,
+        canvas,
+        effectParams,
+        quality: 'medium',
+        onProgress: (p) => {
+          if (abortRef.current) return;
+          setProgress(p.progress);
+          setStage(p.stage as ExportStage);
+          setFrameInfo({ current: p.frame, total: p.totalFrames });
+          setEta(p.estimatedTimeRemaining);
+        },
       });
-    }
 
-    // Get the original video duration
-    const originalDuration = video.duration;
-    if (!originalDuration || !isFinite(originalDuration)) {
-      showToast('Invalid video duration');
-      return;
-    }
-
-    // Detect FPS from source video (briefly plays then resets)
-    const sourceFps = await getVideoFPS(video);
-    // Ensure video is back at start for recording
-    video.currentTime = 0;
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Capture at source video FPS so timing matches
-    const stream = canvas.captureStream(sourceFps);
-
-    const useMp4 =
-      typeof MediaRecorder !== 'undefined' &&
-      MediaRecorder.isTypeSupported('video/mp4');
-    const mimeType = useMp4 ? 'video/mp4' : 'video/webm;codecs=vp9';
-
-    // High bitrate for better quality (e.g. 8 Mbps for HD)
-    const videoBitsPerSecond = 8000000;
-    const recorder = new MediaRecorder(stream, {
-      mimeType,
-      videoBitsPerSecond,
-    });
-
-    const chunks: Blob[] = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
-
-    recorder.onstop = async () => {
-      try {
-        const blob = new Blob(chunks, {
-          type: useMp4 ? 'video/mp4' : 'video/webm',
-        });
-        if (useMp4) {
-          downloadBlob(blob, createFilename('graphics-export', 'mp4'));
-          showToast('Video downloaded (MP4)');
-        } else {
-          showToast('Converting to MP4…');
-          const mp4Blob = await webmToMp4(blob, sourceFps);
-          downloadBlob(mp4Blob, createFilename('graphics-export', 'mp4'));
-          showToast('Video downloaded (MP4)');
-        }
-      } catch (e) {
-        console.error(e);
-        showToast('Download failed');
-      } finally {
-        setRecording(false);
+      if (!abortRef.current) {
+        downloadBlob(result.blob, createFilename('blobweb-export', 'mp4'));
       }
-    };
+    } catch (err) {
+      if (!abortRef.current) {
+        console.error('Export failed:', err);
+        alert('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      }
+    } finally {
+      setIsExporting(false);
+      setStage(null);
+    }
+  }, [canvasRef, mediaSource, mediaType, effectParams]);
 
-    setRecording(true);
-    recorder.start(100); // Request data every 100ms for smoother recording
-
-    // Reset video to start
-    video.currentTime = 0;
-    
-    // Wait for video to seek to start
-    await new Promise((resolve) => {
-      const handleSeeked = () => {
-        video.removeEventListener('seeked', handleSeeked);
-        resolve(undefined);
-      };
-      video.addEventListener('seeked', handleSeeked);
-    });
-
-    // Play video and record for the full duration
-    video.play();
-    
-    // Record for the full original video duration
-    await new Promise((resolve) => {
-      const handleEnded = () => {
-        video.removeEventListener('ended', handleEnded);
-        resolve(undefined);
-      };
-      video.addEventListener('ended', handleEnded);
-      
-      // Fallback timeout (original duration + 1 second buffer)
-      setTimeout(() => {
-        video.removeEventListener('ended', handleEnded);
-        resolve(undefined);
-      }, (originalDuration + 1) * 1000);
-    });
-
-    // Stop recording
-    recorder.stop();
-    
-    // Reset video
-    video.pause();
-    video.currentTime = 0;
-  }, [
-    canvasRef,
-    mediaSource,
-    mediaType,
-    showToast,
-    webmToMp4,
-  ]);
+  const handleCancel = useCallback(() => {
+    abortRef.current = true;
+    cancelExport();
+    setIsExporting(false);
+    setStage(null);
+  }, []);
 
   const handleClick = useCallback(() => {
     if (mediaType === 'video') {
@@ -254,22 +118,51 @@ export function DownloadButton({
     }
   }, [mediaType, handleDownloadImage, handleDownloadVideo]);
 
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={recording}
-        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-      >
-        <Download className="h-4 w-4" />
-        {recording ? 'Recording…' : 'Download'}
-      </button>
-      {toast && (
-        <div className="absolute top-full right-0 mt-1 px-3 py-1.5 text-sm rounded bg-gray-800 dark:bg-gray-700 text-white shadow-lg z-10">
-          {toast}
+  if (isExporting) {
+    return (
+      <div className="relative flex items-center gap-2">
+        <div className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white min-w-[200px]">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="flex justify-between text-xs mb-1">
+              <span>{getStageLabel(stage)}</span>
+              <span>{progress}%</span>
+            </div>
+            <div className="h-1 bg-blue-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-white rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            {frameInfo.total > 0 && (
+              <div className="text-[10px] text-blue-200 mt-1">
+                Frame {frameInfo.current} / {frameInfo.total}
+                {eta > 0 && ` • ~${eta}s remaining`}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </div>
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="p-1.5 rounded-md hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
+          title="Cancel export"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={!mediaSource}
+      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    >
+      <Download className="h-4 w-4" />
+      Download
+    </button>
   );
 }

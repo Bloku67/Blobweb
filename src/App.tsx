@@ -2,12 +2,14 @@ import { useRef, useState } from 'react';
 import { MediaUploader } from './components/MediaUploader';
 import { MediaCanvas } from './components/MediaCanvas';
 import { EffectControls } from './components/EffectControls';
+import { ShaderControls } from './components/ShaderControls';
 import { DownloadButton } from './components/DownloadButton';
 import { VideoPlayer } from './components/VideoPlayer';
 import { ThemeToggle } from './components/ThemeToggle';
 import { CobwebLogo } from './components/CobwebLogo';
 import { XIcon } from './components/XIcon';
 import type { EffectParams } from './hooks/useImageProcessor';
+import { defaultShaderParams } from './utils/webglShaders';
 
 export type MediaType = 'image' | 'video' | null;
 export type MediaSource = HTMLImageElement | HTMLVideoElement | null;
@@ -28,6 +30,7 @@ function App() {
     blobMaxCount: 8,
     lineCount: 0,
     lineDelay: 3,
+    shaderParams: defaultShaderParams,
   });
   const [showBeforeAfter, setShowBeforeAfter] = useState<'before' | 'after'>('after');
 
@@ -49,7 +52,12 @@ function App() {
       blobMaxCount: 8,
       lineCount: 0,
       lineDelay: 3,
+      shaderParams: defaultShaderParams,
     });
+  };
+
+  const handleShaderParamsChange = (shaderParams: typeof defaultShaderParams) => {
+    setEffectParams(prev => ({ ...prev, shaderParams }));
   };
 
   return (
@@ -110,6 +118,12 @@ function App() {
             onChange={setEffectParams}
             disabled={!mediaSource}
           />
+          <div className="border-t border-gray-200 dark:border-gray-700 mt-2">
+            <ShaderControls
+              params={effectParams.shaderParams}
+              onChange={handleShaderParamsChange}
+            />
+          </div>
         </aside>
 
         <main className="flex-1 min-h-[300px] flex flex-col items-center justify-center p-4 overflow-auto bg-gray-200 dark:bg-gray-800">
